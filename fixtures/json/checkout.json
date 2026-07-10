@@ -1,0 +1,15 @@
+{
+  "shippingAddress": {
+    "fullName": "Automation User",
+    "address1": "1 Sauce Labs Way",
+    "address2": "Suite 100",
+    "city": "San Francisco",
+    "state": "CA",
+    "zip": "94105",
+    "country": "United States"
+  },
+  "payment": {
+    "fullName": "Automation User",
+    "cardNumber": "4111111111111111"
+  }
+}
