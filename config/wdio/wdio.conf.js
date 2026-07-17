@@ -9,6 +9,7 @@ const capabilities = [capabilityBuilder.build(config.PLATFORM, config)];
 
 exports.config = {
   runner: 'local',
+  autoXvfb: false,
   specs: [path.join(PROJECT_ROOT, 'specs', '**', '*.js')],
   exclude: [],
   maxInstances: Number.parseInt(config.MAX_INSTANCES, 10) || 1,

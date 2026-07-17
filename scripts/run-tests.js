@@ -2,27 +2,30 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const net = require('net');
 const { spawn } = require('child_process');
 
 const args = process.argv.slice(2);
 const suite = args[0] || 'all';
 const options = parseOptions(args.slice(1));
-const cliArgs = [];
+const wdioConfig = path.resolve(__dirname, '..', 'wdio.conf.js');
+const cliArgs = ['run', wdioConfig];
 if (suite !== 'all') {
   cliArgs.push('--suite', suite);
+} else {
+  cliArgs.push('--suite', 'all');
 }
 
 const projectRoot = path.resolve(__dirname, '..');
 const appiumHost = process.env.APPIUM_HOST || '127.0.0.1';
-const appiumPort = Number.parseInt(process.env.APPIUM_PORT || '4723', 10);
+let appiumPort = Number.parseInt(process.env.APPIUM_PORT || '4723', 10);
 const sdkRoot = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || 'C:\\Users\\Public.DESKTOP-C0DL3EM\\AppData\\Local\\Android\\Sdk';
 const environment = fs.existsSync(path.join(projectRoot, `.env.${suite}`)) ? suite : 'local';
 const platform = (options.platform || process.env.PLATFORM || '').toLowerCase();
 const appType = (options.appType || process.env.APP_TYPE || '').toLowerCase();
 const shouldUseAppium = platform !== 'web' && appType !== 'desktop-web';
-const appiumBinary = process.platform === 'win32'
-  ? path.join(projectRoot, 'node_modules', '.bin', 'appium.cmd')
-  : path.join(projectRoot, 'node_modules', '.bin', 'appium');
+const appiumBinary = path.join(projectRoot, 'node_modules', 'appium', 'index.js');
+const wdioBinary = path.join(projectRoot, 'node_modules', '@wdio', 'cli', 'bin', 'wdio.js');
 
 function resolveJavaHome() {
   const javaExecutable = process.platform === 'win32' ? 'java.exe' : 'java';
@@ -54,6 +57,9 @@ function getAppiumEnvironment() {
     PLATFORM: options.platform || process.env.PLATFORM,
     ANDROID_HOME: sdkRoot,
     ANDROID_SDK_ROOT: sdkRoot,
+    APPIUM_HOME: projectRoot,
+    APPIUM_HOST: appiumHost,
+    APPIUM_PORT: String(appiumPort),
     JAVA_HOME: javaHome,
     ENV: environment,
     PATH: nextPathSegments.join(path.delimiter),
@@ -112,16 +118,39 @@ function waitForAppiumServer() {
   });
 }
 
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, appiumHost);
+  });
+}
+
+async function resolveAppiumPort(preferredPort) {
+  let candidatePort = preferredPort;
+  while (!(await isPortAvailable(candidatePort))) {
+    candidatePort += 1;
+  }
+  return candidatePort;
+}
+
 function startAppiumServer() {
-  const appiumCommand = fs.existsSync(appiumBinary) ? appiumBinary : 'appium';
+  const command = fs.existsSync(appiumBinary) ? process.execPath : 'appium';
+  const commandArgs = fs.existsSync(appiumBinary)
+    ? [appiumBinary, '--address', appiumHost, '--port', String(appiumPort), '--log', path.join(projectRoot, 'appium.log')]
+    : ['--address', appiumHost, '--port', String(appiumPort), '--log', path.join(projectRoot, 'appium.log')];
   const child = spawn(
-    appiumCommand,
-    ['--address', appiumHost, '--port', String(appiumPort), '--log', path.join(projectRoot, 'appium.log')],
+    command,
+    commandArgs,
     {
       cwd: projectRoot,
       stdio: 'ignore',
       env: getAppiumEnvironment(),
-      shell: process.platform === 'win32',
+      shell: false,
       detached: false,
     }
   );
@@ -138,25 +167,33 @@ function startAppiumServer() {
 
   try {
     if (shouldUseAppium) {
-      const alreadyRunning = await waitForAppiumServer();
-      if (!alreadyRunning) {
-        appiumProcess = startAppiumServer();
-        let retries = 0;
-        while (retries < 20) {
-          const ready = await waitForAppiumServer();
-          if (ready) {
-            break;
-          }
-          retries += 1;
-          await new Promise((resolve) => setTimeout(resolve, 500));
+      const requestedPort = appiumPort;
+      appiumPort = await resolveAppiumPort(requestedPort);
+      if (appiumPort !== requestedPort) {
+        console.log(`Appium port ${requestedPort} is busy; using ${appiumPort} for this run.`);
+      }
+
+      appiumProcess = startAppiumServer();
+      let retries = 0;
+      while (retries < 40) {
+        const ready = await waitForAppiumServer();
+        if (ready) {
+          break;
         }
+        retries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      if (retries >= 40) {
+        throw new Error(`Appium server did not become ready at ${appiumHost}:${appiumPort}.`);
       }
     }
 
-    const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    const child = spawn(command, ['wdio', ...cliArgs], {
+    const command = fs.existsSync(wdioBinary) ? process.execPath : process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    const commandArgs = fs.existsSync(wdioBinary) ? [wdioBinary, ...cliArgs] : ['wdio', ...cliArgs];
+    const child = spawn(command, commandArgs, {
       stdio: 'inherit',
-      shell: true,
+      shell: false,
       cwd: projectRoot,
       env: getAppiumEnvironment(),
     });

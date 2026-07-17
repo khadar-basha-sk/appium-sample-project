@@ -25,6 +25,7 @@ class BasePage {
     const selectorList = this.normalizeSelectors(selectors);
     await this.driver.waitUntil(
       async () => {
+        await this.dismissBlockingSystemDialogs();
         const element = await this.findExisting(selectorList);
         return Boolean(element && (await element.isDisplayed()));
       },
@@ -35,6 +36,29 @@ class BasePage {
     );
 
     return this.findExisting(selectorList);
+  }
+
+  async dismissBlockingSystemDialogs() {
+    const waitButtons = [
+      'id=android:id/aerr_wait',
+      'android=new UiSelector().resourceId("android:id/aerr_wait")',
+      'android=new UiSelector().text("Wait")',
+    ];
+
+    for (const selector of waitButtons) {
+      try {
+        const element = await this.driver.$(selector);
+        if ((await element.isExisting()) && (await element.isDisplayed())) {
+          await element.click();
+          await this.driver.pause(1000);
+          return true;
+        }
+      } catch {
+        // Some drivers throw while system dialogs are changing; keep probing safely.
+      }
+    }
+
+    return false;
   }
 
   async tap(selectors, timeout) {
@@ -59,7 +83,7 @@ class BasePage {
     try {
       await this.findDisplayed(selectors, timeout);
       return true;
-    } catch (_error) {
+    } catch {
       return false;
     }
   }
